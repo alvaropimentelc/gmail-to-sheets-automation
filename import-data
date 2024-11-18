@@ -1,0 +1,126 @@
+const CONFIG = {
+  SPREADSHEET_ID: "xxxx",      // ID de la hoja de cálculo
+  SHEET_NAME: "xxxx",          // Nombre de la pestaña destino
+  MAIL_SUBJECT: '"xxxx"',      // Asunto para búsqueda de correo
+  
+  // Configuraciones de importación
+  START_ROW: 2,                // Fila inicial para inserción
+  START_COLUMN: 3,             // Columna inicial para inserción
+};
+
+/**
+ * Función principal de importación
+ */
+function importarDatosSesiones() {
+  // Abrir hoja de destino
+  const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const targetSheet = sheet.getSheetByName(CONFIG.SHEET_NAME);
+  
+  // Limpiar contenido anterior
+  limpiarHojaDestino(targetSheet);
+  
+  // Importar nuevo contenido
+  const datosImportados = obtenerDatosDesdeGmail();
+  
+  if (datosImportados.length > 0) {
+    // Insertar datos
+    targetSheet.getRange(
+      CONFIG.START_ROW, 
+      CONFIG.START_COLUMN, 
+      datosImportados.length, 
+      datosImportados[0].length
+    ).setValues(datosImportados);
+  }
+}
+
+/**
+ * Limpia la hoja de destino
+ */
+function limpiarHojaDestino(sheet) {
+  const ultimaFila = sheet.getLastRow();
+  const ultimaColumna = sheet.getLastColumn();
+  
+  // Limpiar contenido desde fila y columna configuradas
+  sheet.getRange(
+    CONFIG.START_ROW, 
+    CONFIG.START_COLUMN, 
+    ultimaFila, 
+    ultimaColumna
+  ).clearContent();
+}
+
+/**
+ * Obtiene datos desde Gmail
+ */
+function obtenerDatosDesdeGmail() {
+  // Buscar correo con el asunto especificado
+  const hilos = GmailApp.search(CONFIG.MAIL_SUBJECT);
+  
+  // Validar existencia de correos
+  if (hilos.length === 0) {
+    return []; // No hay correos, entonces vacío
+  }
+  
+  // Obtener adjuntos del correo más reciente
+  const correoMasReciente = hilos[0].getMessages()[0];
+  const adjuntos = correoMasReciente.getAttachments();
+  
+  // Validar existencia de adjuntos
+  if (adjuntos.length === 0) {
+    return []; // No hay adjuntos, retornar arreglo vacío
+  }
+  
+  // Procesar el primer adjunto compatible
+  return procesarAdjunto(adjuntos[0]);
+}
+
+/**
+ * Procesa el archivo adjunto según su tipo
+ */
+function procesarAdjunto(adjunto) {
+  const nombreArchivo = adjunto.getName();
+  const mimeType = adjunto.getContentType();
+  
+  if (mimeType === MimeType.CSV || nombreArchivo.endsWith(".csv")) {
+    return procesarCSV(adjunto);
+  } else if (mimeType === MimeType.MICROSOFT_EXCEL || nombreArchivo.endsWith(".xlsx")) {
+    return procesarExcel(adjunto);
+  } else {
+    throw new Error("El archivo no es un CSV ni un XLSX compatible.");
+  }
+}
+
+/**
+ * Procesa un archivo CSV
+ */
+function procesarCSV(adjunto) {
+  const contenido = adjunto.getBlob().getDataAsString();
+  const filas = Utilities.parseCsv(contenido,",");
+  
+  // Eliminar encabezados si existen
+  filas.shift();
+  return filas;
+}
+
+/**
+ * Procesa un archivo Excel
+ */
+function procesarExcel(adjunto) {
+  // Convertir adjunto a hoja de Google
+  const archivoConvertido = Drive.Files.insert(
+    {mimeType: MimeType.GOOGLE_SHEETS}, 
+    adjunto
+  );
+  
+  // Abrir hoja importada
+  const hojaImportada = SpreadsheetApp.openById(archivoConvertido.id).getSheets()[0];
+  
+  // Obtener datos (omitiendo encabezado)
+  const datos = hojaImportada.getDataRange().getDisplayValues();
+  datos.shift(); // Eliminar primera fila (encabezados)
+  
+  // Limpiar archivo temporal
+  Drive.Files.trash(archivoConvertido.id);
+  
+  return datos;
+}
